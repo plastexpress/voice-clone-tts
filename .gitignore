@@ -1,0 +1,41 @@
+# --- Ambiente / segredos ---
+.env
+deploy/.env
+*.local
+
+# --- Dados persistentes (volumes locais) ---
+data/
+database/pb_data/
+database/pb_public/
+backend/data/
+backend/.cache/
+models/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+
+# --- Editores / SO ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log
+npm-debug.log*
+logs/

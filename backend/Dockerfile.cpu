@@ -1,0 +1,28 @@
+# =============================================================================
+# Backend de DESENVOLVIMENTO — sem GPU, sem torch, sem download de modelo.
+# Roda com TTS_ENGINE=dummy só para exercitar interface, tokens, fila e cache.
+# =============================================================================
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app \
+    TTS_ENGINE=dummy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --upgrade pip && pip install -r /tmp/requirements.txt
+
+WORKDIR /app
+COPY app /app/app
+
+RUN mkdir -p /data/audio /data/voices
+
+EXPOSE 8096
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8096", "--no-access-log"]

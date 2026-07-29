@@ -1,0 +1,89 @@
+name: voice-clone-tts-dev
+
+# Stack de DESENVOLVIMENTO: sem GPU, sem download de modelo.
+# O backend roda com TTS_ENGINE=dummy (gera um áudio sintético) para você
+# validar interface, tokens, cache, fila e integração ponta a ponta.
+#
+#   ./start.sh --dev
+#   docker compose --env-file deploy/.env -f deploy/docker-compose.dev.yml up -d
+
+services:
+  pocketbase:
+    build:
+      context: ../database
+      dockerfile: Dockerfile
+    image: voice-clone-tts/pocketbase:latest
+    container_name: vct-dev-pocketbase
+    restart: unless-stopped
+    environment:
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:?defina PB_ADMIN_EMAIL no deploy/.env}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?defina PB_ADMIN_PASSWORD no deploy/.env}
+      PB_INITIAL_USER_EMAIL: ${PB_INITIAL_USER_EMAIL:-}
+      PB_INITIAL_USER_PASSWORD: ${PB_INITIAL_USER_PASSWORD:-}
+      PB_INITIAL_USER_NAME: ${PB_INITIAL_USER_NAME:-Admin}
+    volumes:
+      - ../data/dev/pocketbase:/pb/pb_data
+    ports:
+      - "${PB_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "/pb/pocketbase", "--help"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [vct]
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.cpu
+    image: voice-clone-tts/backend-cpu:latest
+    container_name: vct-dev-backend
+    restart: unless-stopped
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    environment:
+      API_PORT: 8096
+      PB_URL: http://pocketbase:8090
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD}
+      TTS_ENGINE: dummy
+      TTS_DEFAULT_LANGUAGE: ${TTS_DEFAULT_LANGUAGE:-Portuguese}
+      TTS_MAX_TEXT_LENGTH: ${TTS_MAX_TEXT_LENGTH:-5000}
+      OPUS_BITRATE: ${OPUS_BITRATE:-64k}
+      OPUS_CHANNELS: ${OPUS_CHANNELS:-1}
+      OPUS_SAMPLE_RATE: ${OPUS_SAMPLE_RATE:-48000}
+      OPUS_APPLICATION: ${OPUS_APPLICATION:-audio}
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_MAX_GB: ${CACHE_MAX_GB:-2}
+      SYNC_TIMEOUT_SECONDS: 120
+      REQUEST_LOG_ENABLED: "true"
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ../data/dev/audio:/data/audio
+      - ../data/dev/voices:/data/voices
+    ports:
+      - "${API_PORT:-8096}:8096"
+    networks: [vct]
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: voice-clone-tts/frontend:latest
+    container_name: vct-dev-frontend
+    restart: unless-stopped
+    depends_on:
+      - pocketbase
+      - backend
+    environment:
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8096}
+      APP_NAME: ${APP_NAME:-Voice Clone TTS (dev)}
+    ports:
+      - "${FRONTEND_PORT:-8095}:80"
+    networks: [vct]
+
+networks:
+  vct:
+    driver: bridge

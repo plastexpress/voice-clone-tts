@@ -1,0 +1,40 @@
+# =============================================================================
+# Override de DESENVOLVIMENTO da stack GPU.
+#
+# Monta backend/app direto no container e liga o --reload do uvicorn:
+# você salva o arquivo e o servidor recarrega sozinho — sem docker build,
+# sem recriar container.
+#
+#   docker compose --env-file deploy/.env \
+#     -f deploy/docker-compose.yml -f deploy/docker-compose.gpu-dev.yml up -d
+#
+# ou, mais curto:
+#   ./start.sh --code
+#
+# Atenção: recarregar o processo recarrega o modelo na VRAM (dezenas de
+# segundos, lendo do cache local em data/hf-cache). Isso é inerente a um
+# serviço de GPU — nenhum truque de Docker evita. Para iterar em código que
+# não depende do modelo, use ./start.sh --dev (engine dummy, reload instantâneo).
+# =============================================================================
+
+services:
+  backend:
+    volumes:
+      - ../data/audio:/data/audio
+      - ../data/voices:/data/voices
+      - ../data/hf-cache:/models
+      # código montado do host: alterou, recarregou
+      - ../backend/app:/app/app:ro
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8096"
+      - --timeout-keep-alive
+      - "600"
+      - --no-access-log
+      - --reload
+      - --reload-dir
+      - /app/app
