@@ -266,12 +266,231 @@ function VoiceForm({
   editing: Voice | null;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const audioChunksRef = useRef<Float32Array[]>([]);
+  const totalSamplesRef = useRef(0);
+  const sampleRateRef = useRef<number | null>(null);
+  const isRecordingRef = useRef(false);
+  const previewUrlRef = useRef<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [recordingState, setRecordingState] = useState<"idle" | "recording" | "stopped" | "error">("idle");
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [recordingName, setRecordingName] = useState<string | null>(null);
+
+  const promptLines = [
+    "Olá, este é um teste de voz em tom animado.",
+    "Quero falar de forma alegre e confiante.",
+    "Agora vou ler em um tom mais calmo e triste.",
+    "Este trecho é para mostrar uma energia feliz e leve.",
+    "Vou fechar com um tom acolhedor e natural.",
+  ];
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        window.clearInterval(timerRef.current);
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      void audioContextRef.current?.close();
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
 
   function pickFile(file: File | null) {
     if (!file) return;
     if (file.size > 25 * 1024 * 1024) return;
     setForm({ ...form, file });
+  }
+
+  function clearRecording() {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    processorRef.current?.disconnect();
+    sourceRef.current?.disconnect();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    isRecordingRef.current = false;
+    void audioContextRef.current?.close();
+    audioContextRef.current = null;
+    processorRef.current = null;
+    sourceRef.current = null;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewUrl(null);
+    setRecordingName(null);
+    setRecordingError(null);
+    setRecordingState("idle");
+    setTimeLeft(60);
+    audioChunksRef.current = [];
+    totalSamplesRef.current = 0;
+    sampleRateRef.current = null;
+  }
+
+  function stopRecording() {
+    if (!isRecordingRef.current) return;
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    isRecordingRef.current = false;
+    const context = audioContextRef.current;
+    const processor = processorRef.current;
+    const stream = streamRef.current;
+
+    processor?.disconnect();
+    sourceRef.current?.disconnect();
+    stream?.getTracks().forEach((track) => track.stop());
+
+    streamRef.current = null;
+    processorRef.current = null;
+    sourceRef.current = null;
+
+    if (context) {
+      void context.close();
+    }
+    audioContextRef.current = null;
+
+    const sampleRate = sampleRateRef.current || 44100;
+    const chunks = audioChunksRef.current;
+    if (chunks.length === 0) {
+      setRecordingState("stopped");
+      setRecordingError("A gravação ficou vazia. Tente novamente.");
+      return;
+    }
+
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    chunks.forEach((chunk) => {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    });
+
+    const wavBlob = encodeWav(merged, sampleRate);
+    const file = new File([wavBlob], `clone-referencia-${Date.now()}.wav`, { type: "audio/wav" });
+    setForm({ ...form, file });
+    setRecordingName(file.name);
+
+    const nextUrl = URL.createObjectURL(wavBlob);
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+    previewUrlRef.current = nextUrl;
+    setPreviewUrl(nextUrl);
+    setRecordingState("stopped");
+    setRecordingError(null);
+    audioChunksRef.current = [];
+    totalSamplesRef.current = 0;
+    sampleRateRef.current = null;
+  }
+
+  async function startRecording() {
+    if (isRecordingRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setRecordingError("Este navegador não suporta gravação de áudio pelo microfone.");
+      setRecordingState("error");
+      return;
+    }
+
+    try {
+      setRecordingError(null);
+      setRecordingState("recording");
+      setTimeLeft(60);
+      audioChunksRef.current = [];
+      totalSamplesRef.current = 0;
+      sampleRateRef.current = null;
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
+      setPreviewUrl(null);
+      setRecordingName(null);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext();
+      await audioContext.resume();
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        audioChunksRef.current.push(new Float32Array(input));
+        totalSamplesRef.current += input.length;
+        sampleRateRef.current = event.inputBuffer.sampleRate;
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      streamRef.current = stream;
+      audioContextRef.current = audioContext;
+      processorRef.current = processor;
+      sourceRef.current = source;
+      isRecordingRef.current = true;
+
+      timerRef.current = window.setInterval(() => {
+        setTimeLeft((value) => {
+          if (value <= 1) {
+            if (timerRef.current) {
+              window.clearInterval(timerRef.current);
+            }
+            timerRef.current = null;
+            void stopRecording();
+            return 0;
+          }
+          return value - 1;
+        });
+      }, 1000);
+    } catch {
+      setRecordingState("error");
+      setRecordingError("Não foi possível acessar o microfone. Permita o uso e tente novamente.");
+    }
+  }
+
+  function encodeWav(samples: Float32Array, sampleRate: number): Blob {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    const writeString = (offset: number, value: string) => {
+      for (let i = 0; i < value.length; i += 1) {
+        view.setUint8(offset + i, value.charCodeAt(i));
+      }
+    };
+
+    writeString(0, "RIFF");
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, samples.length * 2, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+
+    return new Blob([buffer], { type: "audio/wav" });
   }
 
   return (
@@ -310,52 +529,102 @@ function VoiceForm({
         />
       </Field>
 
-      <Field label="Áudio de referência" required={!editing} hint="WAV, MP3, M4A, FLAC ou OGG — 3 a 10 segundos, sem música ao fundo.">
-        <div
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            pickFile(event.dataTransfer.files?.[0] ?? null);
-          }}
-          onClick={() => inputRef.current?.click()}
-          className={cx(
-            "flex cursor-pointer flex-col items-center gap-1.5 rounded-md border border-dashed px-4 py-6 text-center transition-colors",
-            dragging ? "border-accent bg-accent-soft" : "border-line hover:bg-hover",
-          )}
-        >
-          <IconUpload size={18} className="text-faint" />
-          {form.file ? (
-            <>
-              <span className="text-[13px] font-medium text-ink">{form.file.name}</span>
-              <span className="text-[11px] text-faint">
-                {(form.file.size / 1024).toFixed(0)} KB — clique para trocar
-              </span>
-            </>
-          ) : editing?.reference_audio ? (
-            <>
-              <span className="text-[13px] text-muted">
-                Já existe um áudio: <span className="font-mono">{editing.reference_audio}</span>
-              </span>
-              <span className="text-[11px] text-faint">Clique ou arraste para substituir</span>
-            </>
-          ) : (
-            <>
-              <span className="text-[13px] text-muted">Arraste um arquivo ou clique para escolher</span>
-              <span className="text-[11px] text-faint">até 25 MB</span>
-            </>
-          )}
-          <input
-            ref={inputRef}
-            type="file"
-            accept="audio/*,.m4a,.opus"
-            className="hidden"
-            onChange={(event) => pickFile(event.target.files?.[0] ?? null)}
-          />
+      <Field label="Áudio de referência" required={!editing} hint="Você pode gravar direto do microfone ou enviar um arquivo. A gravação vira automaticamente o áudio de referência.">
+        <div className="space-y-3 rounded-md border border-line bg-subtle p-3">
+          <div className="rounded-md border border-line bg-surface p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-[13px] font-medium text-ink">Gravação com microfone</p>
+                <p className="text-[12px] text-faint">Use 1 minuto para falar frases em tons diferentes e captar várias entonações.</p>
+              </div>
+              <Badge tone={recordingState === "recording" ? "warning" : recordingState === "stopped" ? "success" : "neutral"}>
+                {recordingState === "recording" ? `${timeLeft}s` : recordingState === "stopped" ? "pronto" : "parado"}
+              </Badge>
+            </div>
+
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-accent transition-[width]"
+                style={{ width: `${(timeLeft / 60) * 100}%` }}
+              />
+            </div>
+
+            <div className="mt-3 rounded-md border border-line bg-subtle p-3">
+              <p className="text-[12px] font-medium text-ink">Leia estas frases com variação de emoção:</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-[12px] leading-relaxed text-faint">
+                {promptLines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="primary"
+                icon={<IconMic size={14} />}
+                onClick={recordingState === "recording" ? stopRecording : startRecording}
+              >
+                {recordingState === "recording" ? "Parar gravação" : "Gravar 1 minuto"}
+              </Button>
+              <Button onClick={clearRecording}>Limpar</Button>
+            </div>
+
+            {recordingError && <p className="mt-2 text-[12px] text-danger">{recordingError}</p>}
+
+            {previewUrl && (
+              <div className="mt-3 space-y-2">
+                <p className="text-[12px] font-medium text-ink">Pré-visualização da gravação</p>
+                <AudioPlayer src={previewUrl} filename={recordingName ?? "gravacao-reference.mp3"} compact />
+              </div>
+            )}
+          </div>
+
+          <div
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
+              pickFile(event.dataTransfer.files?.[0] ?? null);
+            }}
+            onClick={() => inputRef.current?.click()}
+            className={cx(
+              "flex cursor-pointer flex-col items-center gap-1.5 rounded-md border border-dashed px-4 py-6 text-center transition-colors",
+              dragging ? "border-accent bg-accent-soft" : "border-line hover:bg-hover",
+            )}
+          >
+            <IconUpload size={18} className="text-faint" />
+            {form.file ? (
+              <>
+                <span className="text-[13px] font-medium text-ink">{form.file.name}</span>
+                <span className="text-[11px] text-faint">
+                  {(form.file.size / 1024).toFixed(0)} KB — clique para trocar
+                </span>
+              </>
+            ) : editing?.reference_audio ? (
+              <>
+                <span className="text-[13px] text-muted">
+                  Já existe um áudio: <span className="font-mono">{editing.reference_audio}</span>
+                </span>
+                <span className="text-[11px] text-faint">Clique ou arraste para substituir</span>
+              </>
+            ) : (
+              <>
+                <span className="text-[13px] text-muted">Arraste um arquivo ou clique para escolher</span>
+                <span className="text-[11px] text-faint">até 25 MB</span>
+              </>
+            )}
+            <input
+              ref={inputRef}
+              type="file"
+              accept="audio/*,.m4a,.opus"
+              className="hidden"
+              onChange={(event) => pickFile(event.target.files?.[0] ?? null)}
+            />
+          </div>
         </div>
       </Field>
 
