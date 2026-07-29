@@ -124,7 +124,8 @@ services:
       - backend
     environment:
       # Injetados em runtime no /config.js servido pelo nginx
-      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8096}
+      # Ajuste PUBLIC_API_URL para o domínio público da API. Ex: https://voice-api.plastexpress.com.br
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-https://voice-api.plastexpress.com.br}
       APP_NAME: ${APP_NAME:-Voice Clone TTS}
     ports:
       - "${FRONTEND_PORT:-8095}:80"
