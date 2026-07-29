@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from .. import cache
+from .. import cache, security
 from ..auth import TokenContext, require_token, require_user
 from ..config import settings
 from ..logging_setup import get_logger
@@ -163,3 +163,38 @@ async def purge_cache(
 @internal.get("/cache/stats")
 async def cache_stats(_: dict = Depends(require_user)) -> dict[str, Any]:
     return await cache.stats()
+
+
+# ------------------------------------------------ tokens: valor reversível
+@internal.post("/tokens/encrypt")
+async def encrypt_token(
+    _: dict = Depends(require_user),
+    raw: str = Body(..., embed=True),
+) -> dict[str, str]:
+    """Cifra um token recém-gerado, pra guardar junto com o hash e poder revelar depois."""
+    try:
+        return {"encrypted": security.encrypt_token(raw)}
+    except security.TokenEncryptionUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@internal.get("/tokens/{token_id}/reveal")
+async def reveal_token(token_id: str, user: dict = Depends(require_user)) -> dict[str, str]:
+    record = await pb.get_record("api_tokens", token_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="token não encontrado")
+    if str(record.get("owner")) != str(user.get("id")):
+        raise HTTPException(status_code=403, detail="este token pertence a outro usuário")
+
+    encrypted = record.get("token_encrypted")
+    if not encrypted:
+        raise HTTPException(
+            status_code=404,
+            detail="este token não tem valor reversível salvo (foi criado antes desse recurso)",
+        )
+    try:
+        return {"token": security.decrypt_token(encrypted)}
+    except security.TokenEncryptionUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

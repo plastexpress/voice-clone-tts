@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # ------------------------------------------------------------------ misc
+    # Chave simétrica (Fernet, 32 bytes urlsafe-base64) usada para guardar o
+    # token da API de forma reversível, além do hash — permite "revelar" o
+    # valor depois pela interface. Gere com:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Sem essa chave, o token continua funcionando normalmente (a autenticação
+    # usa só o hash); só a funcionalidade de "revelar" fica indisponível.
+    token_encryption_key: str = ""
     token_cache_ttl_seconds: float = 20.0
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"

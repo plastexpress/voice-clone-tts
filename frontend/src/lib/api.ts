@@ -4,6 +4,21 @@ import { config } from "./config";
 import { pb } from "./pb";
 import type { GenerationResult, SystemStatus } from "./types";
 
+export type JobStatus = {
+  jobId: string;
+  status: "queued" | "processing" | "completed" | "failed" | "canceled";
+  cached: boolean;
+  audioId: string | null;
+  durationMs: number;
+  queueMs: number;
+  generationMs: number;
+  error: string | null;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -52,6 +67,16 @@ export const api = {
       body: JSON.stringify({ confirm: true }),
     }),
 
+  /** Cifra um token recém-gerado, pra guardar junto com o hash (permite revelar depois). */
+  encryptToken: (raw: string) =>
+    internal<{ encrypted: string }>("/tokens/encrypt", {
+      method: "POST",
+      body: JSON.stringify({ raw }),
+    }),
+
+  /** Devolve o valor original de um token salvo com `token_encrypted`. */
+  revealToken: (tokenId: string) => internal<{ token: string }>(`/tokens/${tokenId}/reveal`),
+
   /** Baixa um áudio do cache já autenticado e devolve uma object URL. */
   async audioObjectUrl(audioId: string): Promise<{ url: string; blob: Blob }> {
     const response = await fetch(`${config.apiBase}/v1/audio/${audioId}`, {
@@ -91,6 +116,80 @@ export const api = {
       sizeBytes: blob.size,
       model: response.headers.get("X-Model") || "",
       voice: response.headers.get("X-Voice") || "",
+    };
+  },
+
+  /**
+   * Playground/produção em escala: enfileira e devolve na hora (202), sem
+   * esperar a geração terminar. Evita o teto de ~100s que proxies/túneis na
+   * frente da API costumam impor a uma resposta síncrona.
+   */
+  async submitAsync(rawToken: string, body: Record<string, unknown>): Promise<string> {
+    const response = await fetch(`${config.apiBase}/v1/tts/async`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${rawToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new ApiError(await readError(response), response.status);
+    const data = (await response.json()) as { job_id: string };
+    return data.job_id;
+  },
+
+  async getJob(rawToken: string, jobId: string): Promise<JobStatus> {
+    const response = await fetch(`${config.apiBase}/v1/jobs/${jobId}`, {
+      headers: { Authorization: `Bearer ${rawToken}` },
+    });
+    if (!response.ok) throw new ApiError(await readError(response), response.status);
+    const data = await response.json();
+    return {
+      jobId: data.job_id,
+      status: data.status,
+      cached: !!data.cached,
+      audioId: data.audio_id || null,
+      durationMs: Number(data.duration_ms || 0),
+      queueMs: Number(data.queue_ms || 0),
+      generationMs: Number(data.generation_ms || 0),
+      error: data.error || null,
+    };
+  },
+
+  /** Submete via /v1/tts/async e faz polling até terminar; baixa o áudio no final. */
+  async generateAsync(
+    rawToken: string,
+    body: Record<string, unknown>,
+    onTick?: (job: JobStatus) => void,
+  ): Promise<GenerationResult> {
+    const started = performance.now();
+    const jobId = await this.submitAsync(rawToken, body);
+
+    let job: JobStatus;
+    while (true) {
+      job = await this.getJob(rawToken, jobId);
+      onTick?.(job);
+      if (job.status === "completed" || job.status === "failed" || job.status === "canceled") break;
+      await sleep(1500);
+    }
+
+    if (job.status !== "completed" || !job.audioId) {
+      throw new ApiError(job.error || `job terminou como "${job.status}"`, 500);
+    }
+
+    const { url, blob } = await this.audioObjectUrl(job.audioId);
+    return {
+      url,
+      blob,
+      cached: job.cached,
+      audioId: job.audioId,
+      durationMs: job.durationMs,
+      queueMs: job.queueMs,
+      generationMs: job.generationMs,
+      totalMs: Math.round(performance.now() - started),
+      sizeBytes: blob.size,
+      model: "",
+      voice: "",
     };
   },
 

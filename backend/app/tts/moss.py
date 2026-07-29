@@ -126,6 +126,12 @@ class MossTTSEngine(TTSEngine):
         self._resolved_attn: str | None = None
         self._tokenizer_device: str | None = None
         self._load_lock = threading.Lock()
+        # códigos de áudio já codificados por referência (path -> (mtime, tensor)).
+        # evita reencodar a mesma referência de voz em toda geração — para um
+        # clone com ~1min de áudio, o encode na CPU custa minutos, mas só
+        # muda quando o arquivo de referência é substituído.
+        self._reference_cache: dict[str, tuple[float, Any]] = {}
+        self._reference_cache_lock = threading.Lock()
 
     # ------------------------------------------------------------------ VRAM
     @staticmethod
@@ -295,6 +301,13 @@ class MossTTSEngine(TTSEngine):
 
             self._tokenizer_device = self._resolve_tokenizer_device()
             if hasattr(processor, "audio_tokenizer") and processor.audio_tokenizer is not None:
+                # NÃO converter para bf16: o forward do audio tokenizer
+                # (modeling_moss_audio_tokenizer.py) tem `.float()` embutido em
+                # pontos internos (ex.: antes do quantizer), então mistura
+                # ativação float32 com pesos bf16 e quebra com
+                # "Input type (float) and bias type (c10::BFloat16) should be
+                # the same". Confirmado via teste real — reproduzir com cuidado
+                # antes de tentar de novo.
                 processor.audio_tokenizer = processor.audio_tokenizer.to(self._tokenizer_device)
 
             try:
@@ -350,6 +363,35 @@ class MossTTSEngine(TTSEngine):
                 pass
             log.info("modelo descarregado da memória")
 
+    # ---------------------------------------------------- cache de referência
+    def _encode_reference(self, path: Path) -> Any:
+        """Codifica o áudio de referência em codes e guarda em cache por path+mtime.
+
+        `build_user_message(reference=...)` aceita tanto um path (reencoda do
+        zero) quanto um `torch.Tensor` de codes já prontos. Como o audio
+        tokenizer roda na CPU (ver `_resolve_tokenizer_device`), reencodar a
+        cada request é o gargalo que faz toda geração demorar o mesmo tanto,
+        clone ou não — este cache faz isso acontecer só na 1ª vez por voz.
+        """
+        key = str(path)
+        mtime = path.stat().st_mtime
+        with self._reference_cache_lock:
+            cached = self._reference_cache.get(key)
+            if cached is not None and cached[0] == mtime:
+                return cached[1]
+
+        assert self._processor is not None
+        started = time.perf_counter()
+        codes = self._processor.encode_audios_from_path([key])[0]
+        log.info(
+            "referência %s codificada em %.1fs (cache miss — próximas gerações com esta voz pulam este passo)",
+            path.name,
+            time.perf_counter() - started,
+        )
+        with self._reference_cache_lock:
+            self._reference_cache[key] = (mtime, codes)
+        return codes
+
     # -------------------------------------------------------------- síntese
     def synthesize(self, request: SynthesisRequest) -> SynthesisResult:
         self.load()
@@ -365,7 +407,7 @@ class MossTTSEngine(TTSEngine):
 
         message_kwargs: dict[str, Any] = {"text": request.text}
         if request.reference_audio is not None:
-            message_kwargs["reference"] = [str(request.reference_audio)]
+            message_kwargs["reference"] = [self._encode_reference(request.reference_audio)]
             if request.reference_text:
                 message_kwargs["reference_text"] = request.reference_text
         if request.language:
@@ -392,6 +434,7 @@ class MossTTSEngine(TTSEngine):
                 input_ids = batch["input_ids"].to(self._device)
                 attention_mask = batch["attention_mask"].to(self._device)
 
+                gen_started = time.perf_counter()
                 try:
                     outputs = self._model.generate(
                         input_ids=input_ids,
@@ -406,13 +449,23 @@ class MossTTSEngine(TTSEngine):
                         attention_mask=attention_mask,
                         max_new_tokens=request.max_new_tokens,
                     )
+                generate_ms = int((time.perf_counter() - gen_started) * 1000)
 
+                decode_started = time.perf_counter()
                 audio = None
                 for decoded in self._processor.decode(outputs):
                     codes = getattr(decoded, "audio_codes_list", None)
                     if codes:
                         audio = codes[0]
                         break
+                decode_ms = int((time.perf_counter() - decode_started) * 1000)
+                log.info(
+                    "split: generate() %dms (LLM, %s) | decode() %dms (audio tokenizer, %s)",
+                    generate_ms,
+                    self._device,
+                    decode_ms,
+                    self._tokenizer_device,
+                )
         except torch.cuda.OutOfMemoryError as exc:  # type: ignore[attr-defined]
             torch.cuda.empty_cache()
             raise EngineOutOfMemory(

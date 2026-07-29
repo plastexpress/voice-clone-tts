@@ -45,6 +45,7 @@ export type ApiToken = BaseRecord & {
   name: string;
   token_hash: string;
   token_prefix: string;
+  token_encrypted?: string;
   owner: string;
   voice?: string;
   settings?: TokenSettings;

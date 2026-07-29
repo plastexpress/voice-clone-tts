@@ -87,6 +87,30 @@ def _as_int(value: Any, fallback: int) -> int:
         return fallback
 
 
+# ~12,5 tokens de áudio por segundo de fala (ver docs). O MOSS às vezes não
+# sorteia o token de fim de áudio (mais provável com temperature alta) e roda
+# até o teto de max_new_tokens — sem isso, uma frase de 10s pode virar 5+
+# minutos de geração (e estourar timeouts de proxy/túnel). O teto abaixo
+# escala com o texto, com folga generosa pra pausas/entonação.
+_TOKENS_PER_SECOND = 12.5
+_CHARS_PER_SECOND_SLOW = 6.0
+_SAFETY_MULTIPLIER = 3
+_MIN_SAFETY_TOKENS = 150  # ~12s de áudio
+
+
+def _safety_max_new_tokens(text: str, duration_tokens: int | None, requested: int) -> int:
+    if duration_tokens:
+        # duration_tokens já é um pedido explícito de duração; só damos uma
+        # margem pra o modelo fechar a frase, não o texto inteiro de novo.
+        cap = int(duration_tokens * 1.5) + _MIN_SAFETY_TOKENS
+    else:
+        chars = len((text or "").strip()) or 1
+        estimated_seconds = chars / _CHARS_PER_SECOND_SLOW
+        cap = int(estimated_seconds * _TOKENS_PER_SECOND * _SAFETY_MULTIPLIER)
+    cap = max(cap, _MIN_SAFETY_TOKENS)
+    return min(requested, cap)
+
+
 def token_defaults(token: TokenContext) -> dict[str, Any]:
     """Padrões do serviço mesclados com o que o token define."""
     cfg = token.settings_json
@@ -136,6 +160,12 @@ def resolve(
 
     text = request.text.strip()[: settings.tts_max_text_length]
 
+    duration_tokens = pick("duration_tokens", request.duration_tokens)
+    max_new_tokens = _as_int(
+        pick("max_new_tokens", request.max_new_tokens), settings.moss_max_new_tokens
+    )
+    max_new_tokens = _safety_max_new_tokens(text, duration_tokens, max_new_tokens)
+
     return RenderParams(
         text=text,
         voice_id=(voice or {}).get("id"),
@@ -149,10 +179,8 @@ def resolve(
             pick("repetition_penalty", request.repetition_penalty),
             settings.tts_repetition_penalty,
         ),
-        max_new_tokens=_as_int(
-            pick("max_new_tokens", request.max_new_tokens), settings.moss_max_new_tokens
-        ),
-        duration_tokens=pick("duration_tokens", request.duration_tokens),
+        max_new_tokens=max_new_tokens,
+        duration_tokens=duration_tokens,
         seed=pick("seed", request.seed),
         format=fmt,
         bitrate=str(pick("bitrate", request.bitrate) or settings.opus_bitrate),

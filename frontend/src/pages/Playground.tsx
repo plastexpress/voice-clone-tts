@@ -15,7 +15,7 @@ import {
   cx,
 } from "../components/ui";
 import { IconBolt, IconSparkles } from "../components/icons";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, type JobStatus } from "../lib/api";
 import { config } from "../lib/config";
 import { formatBytes, formatDuration, formatMs } from "../lib/format";
 import { pb, pbError } from "../lib/pb";
@@ -36,6 +36,7 @@ export function Playground() {
   const [useCache, setUseCache] = useState(true);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState<JobStatus | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -85,11 +86,18 @@ export function Playground() {
       return;
     }
 
+    const voiceLabel =
+      (overrides.enabled && overrides.voice) || selected?.expand?.voice?.slug || "";
+
     setGenerating(true);
     setResult(null);
+    setProgress(null);
     try {
-      const generated = await api.generate(rawToken, body);
-      setResult(generated);
+      // assíncrono (job + polling): evita o teto de ~100s que proxies/túneis
+      // costumam impor a uma resposta síncrona quando a geração demora
+      // (voz nova ainda sem cache de referência, texto longo, fila ocupada).
+      const generated = await api.generateAsync(rawToken, body, setProgress);
+      setResult({ ...generated, voice: voiceLabel });
       toast.success(
         generated.cached
           ? "Servido do cache local — sem passar pela GPU"
@@ -101,8 +109,9 @@ export function Playground() {
       toast.error(message);
     } finally {
       setGenerating(false);
+      setProgress(null);
     }
-  }, [rawToken, text, body, toast]);
+  }, [rawToken, text, body, toast, overrides, selected]);
 
   const tokenForExample = rawToken || "SEU_TOKEN";
   const jsonBody = JSON.stringify(body);
@@ -146,15 +155,20 @@ export function Playground() {
                 Usar cache
               </label>
 
-              <Button
-                variant="primary"
-                loading={generating}
-                onClick={generate}
-                icon={<IconSparkles size={14} />}
-                className="h-9 px-4"
-              >
-                {generating ? "Gerando…" : "Gerar áudio"}
-              </Button>
+              <div className="flex items-center gap-2.5">
+                {generating && (
+                  <span className="text-[12px] text-faint">{progressLabel(progress)}</span>
+                )}
+                <Button
+                  variant="primary"
+                  loading={generating}
+                  onClick={generate}
+                  icon={<IconSparkles size={14} />}
+                  className="h-9 px-4"
+                >
+                  {generating ? "Gerando…" : "Gerar áudio"}
+                </Button>
+              </div>
             </div>
           </Card>
 
@@ -188,41 +202,83 @@ export function Playground() {
 
           <div className="space-y-3">
             <h2 className="text-[13px] font-semibold text-ink">Como chamar de fora</h2>
+            <p className="text-[12px] text-faint">
+              Fluxo assíncrono (job + polling): a resposta síncrona pode passar de 100s numa
+              geração mais longa e proxies/túneis na frente da API costumam derrubar a conexão
+              antes disso — o job continua no cache, mas seu cliente nunca vê o resultado.
+            </p>
             <CodeBlock
               label="curl"
-              code={`curl -X POST ${config.publicApiUrl}/v1/tts \\
+              code={`# 1) enfileira e pega o job_id na hora (202)
+JOB=$(curl -s -X POST ${config.publicApiUrl}/v1/tts/async \\
   -H "Authorization: Bearer ${tokenForExample}" \\
   -H "Content-Type: application/json" \\
-  -d '${jsonBody}' \\
+  -d '${jsonBody}')
+JOB_ID=$(echo "$JOB" | python3 -c "import json,sys;print(json.load(sys.stdin)['job_id'])")
+
+# 2) consulta até terminar
+while true; do
+  STATUS=$(curl -s ${config.publicApiUrl}/v1/jobs/$JOB_ID \\
+    -H "Authorization: Bearer ${tokenForExample}")
+  echo "$STATUS"
+  case "$STATUS" in *'"status":"completed"'*|*'"status":"failed"'*) break ;; esac
+  sleep 1.5
+done
+
+# 3) baixa o áudio pelo audio_id retornado
+AUDIO_ID=$(echo "$STATUS" | python3 -c "import json,sys;print(json.load(sys.stdin)['audio_id'])")
+curl -s ${config.publicApiUrl}/v1/audio/$AUDIO_ID \\
+  -H "Authorization: Bearer ${tokenForExample}" \\
   --output fala.opus`}
             />
             <CodeBlock
               label="python"
-              code={`import requests
+              code={`import time
+import requests
 
-response = requests.post(
-    "${config.publicApiUrl}/v1/tts",
-    headers={"Authorization": "Bearer ${tokenForExample}"},
-    json=${toPython(body)},
-    timeout=300,
-)
-response.raise_for_status()
-open("fala.opus", "wb").write(response.content)
-print("cache:", response.headers.get("X-Cache"))`}
+API = "${config.publicApiUrl}"
+HEADERS = {"Authorization": "Bearer ${tokenForExample}"}
+
+job = requests.post(f"{API}/v1/tts/async", headers=HEADERS, json=${toPython(body)}, timeout=15)
+job.raise_for_status()
+job_id = job.json()["job_id"]
+
+while True:
+    status = requests.get(f"{API}/v1/jobs/{job_id}", headers=HEADERS, timeout=15).json()
+    if status["status"] in ("completed", "failed", "canceled"):
+        break
+    time.sleep(1.5)
+
+if status["status"] != "completed":
+    raise RuntimeError(status.get("error") or status["status"])
+
+audio = requests.get(f"{API}/v1/audio/{status['audio_id']}", headers=HEADERS, timeout=60)
+open("fala.opus", "wb").write(audio.content)
+print("duração:", status["duration_ms"], "ms")`}
             />
             <CodeBlock
               label="javascript"
-              code={`const response = await fetch("${config.publicApiUrl}/v1/tts", {
+              code={`const API = "${config.publicApiUrl}";
+const headers = { Authorization: "Bearer ${tokenForExample}" };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const submitted = await fetch(\`\${API}/v1/tts/async\`, {
   method: "POST",
-  headers: {
-    "Authorization": "Bearer ${tokenForExample}",
-    "Content-Type": "application/json",
-  },
+  headers: { ...headers, "Content-Type": "application/json" },
   body: JSON.stringify(${jsonBody}),
 });
+const { job_id } = await submitted.json();
 
-const blob = await response.blob();
-const audio = new Audio(URL.createObjectURL(blob));
+let status;
+do {
+  await sleep(1500);
+  status = await (await fetch(\`\${API}/v1/jobs/\${job_id}\`, { headers })).json();
+} while (!["completed", "failed", "canceled"].includes(status.status));
+
+if (status.status !== "completed") throw new Error(status.error || status.status);
+
+const audioRes = await fetch(\`\${API}/v1/audio/\${status.audio_id}\`, { headers });
+const audio = new Audio(URL.createObjectURL(await audioRes.blob()));
 audio.play();`}
             />
           </div>
@@ -346,6 +402,18 @@ audio.play();`}
       </div>
     </>
   );
+}
+
+function progressLabel(job: JobStatus | null): string {
+  if (!job) return "enviando…";
+  switch (job.status) {
+    case "queued":
+      return "na fila…";
+    case "processing":
+      return "gerando na GPU…";
+    default:
+      return job.status;
+  }
 }
 
 function toPython(body: Record<string, unknown>): string {

@@ -18,7 +18,8 @@ import {
   Toggle,
   cx,
 } from "../components/ui";
-import { IconKey, IconPlus, IconTrash } from "../components/icons";
+import { IconEye, IconKey, IconPlus, IconTrash } from "../components/icons";
+import { api, ApiError } from "../lib/api";
 import { config } from "../lib/config";
 import { formatRelative } from "../lib/format";
 import { pb, pbError } from "../lib/pb";
@@ -85,6 +86,8 @@ export function Tokens() {
   const [saving, setSaving] = useState(false);
 
   const [created, setCreated] = useState<{ raw: string; name: string } | null>(null);
+  const [revealed, setRevealed] = useState<{ raw: string; name: string } | null>(null);
+  const [revealingId, setRevealingId] = useState<string | null>(null);
   const [removing, setRemoving] = useState<ApiToken | null>(null);
 
   const load = useCallback(async () => {
@@ -148,10 +151,26 @@ export function Tokens() {
         toast.success("Token atualizado");
       } else {
         const raw = generateToken();
+
+        // guarda também cifrado (reversível) pra poder "revelar" depois pela
+        // interface — se a chave não estiver configurada no backend, segue
+        // sem esse campo (o token funciona normalmente, só não dá pra revelar).
+        let tokenEncrypted = "";
+        try {
+          tokenEncrypted = (await api.encryptToken(raw)).encrypted;
+        } catch (error) {
+          toast.error(
+            error instanceof ApiError
+              ? `Token criado, mas sem valor recuperável: ${error.message}`
+              : "Token criado, mas não consegui salvar o valor recuperável",
+          );
+        }
+
         const record = await pb.collection("api_tokens").create<ApiToken>({
           ...payload,
           token_hash: await hashToken(raw),
           token_prefix: displayPrefix(raw),
+          token_encrypted: tokenEncrypted,
           owner: user.id,
           active: true,
           request_count: 0,
@@ -178,6 +197,21 @@ export function Tokens() {
       );
     } catch (error) {
       toast.error(pbError(error, "Não consegui alterar o token"));
+    }
+  }
+
+  async function reveal(token: ApiToken) {
+    setRevealingId(token.id);
+    try {
+      const { token: raw } = await api.revealToken(token.id);
+      rememberToken(token.id, raw);
+      setRevealed({ raw, name: token.name });
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError ? `${error.status}: ${error.message}` : (error as Error).message,
+      );
+    } finally {
+      setRevealingId(null);
     }
   }
 
@@ -286,6 +320,14 @@ export function Tokens() {
                         </button>
                       )}
                       <button
+                        onClick={() => reveal(token)}
+                        disabled={revealingId === token.id}
+                        className="rounded p-1 text-faint opacity-0 transition-all hover:bg-hover hover:text-ink group-hover:opacity-100 disabled:opacity-100"
+                        title="Revelar valor"
+                      >
+                        <IconEye size={14} />
+                      </button>
+                      <button
                         onClick={() => setRemoving(token)}
                         className="rounded p-1 text-faint opacity-0 transition-all hover:bg-danger-soft hover:text-danger group-hover:opacity-100"
                         title="Revogar"
@@ -328,7 +370,7 @@ export function Tokens() {
         open={!!created}
         onClose={() => setCreated(null)}
         title="Token criado"
-        description="Copie agora: o servidor guarda apenas o hash e este valor não pode ser recuperado."
+        description="Dá pra ver este valor de novo depois, clicando no ícone de olho na lista."
         footer={<Button variant="primary" onClick={() => setCreated(null)}>Entendi</Button>}
       >
         {created && (
@@ -350,11 +392,24 @@ export function Tokens() {
   -d '{"text": "Olá, esse é um teste de voz."}' \\
   --output fala.opus`}
             />
+          </div>
+        )}
+      </Modal>
 
-            <p className="text-[12px] leading-relaxed text-faint">
-              Guardei uma cópia local neste navegador só para o Playground funcionar sem
-              você colar o token toda vez.
-            </p>
+      {/* ---------------------------------------------------- token revelado */}
+      <Modal
+        open={!!revealed}
+        onClose={() => setRevealed(null)}
+        title={`Token de "${revealed?.name ?? ""}"`}
+        description="Valor original, decifrado agora pelo backend."
+        footer={<Button variant="primary" onClick={() => setRevealed(null)}>Fechar</Button>}
+      >
+        {revealed && (
+          <div className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent-soft px-3 py-2.5">
+            <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-ink">
+              {revealed.raw}
+            </code>
+            <CopyButton value={revealed.raw} />
           </div>
         )}
       </Modal>
