@@ -52,6 +52,9 @@ services:
       PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL}
       PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD}
 
+      # CORS: domínios permitidos a acessar a API (padrão inclui os domínios plastexpress)
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://voice.plastexpress.com.br,https://voice-server.plastexpress.com.br,https://voice-api.plastexpress.com.br}
+
       TTS_ENGINE: ${TTS_ENGINE:-moss}
       MOSS_MODEL_ID: ${MOSS_MODEL_ID:-OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5}
       MOSS_MODEL_REVISION: ${MOSS_MODEL_REVISION:-}
