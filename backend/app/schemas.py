@@ -88,6 +88,14 @@ class TTSRequest(BaseModel):
         ),
     )
     seed: int | None = Field(default=None, ge=0)
+    instruction: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Instrução livre em texto pro modelo, ex.: 'fale com sotaque americano'. "
+            "Não é um campo documentado oficialmente pelo MOSS — funciona por tentativa e erro."
+        ),
+    )
 
     cache: bool | None = Field(
         default=None, description="false força regeneração mesmo com cache disponível"

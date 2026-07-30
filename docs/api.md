@@ -47,6 +47,7 @@ Só `text` é obrigatório. Os demais campos **só são aceitos se o token tiver
 | `duration_tokens` | int | controle de duração em tokens — 1 s ≈ 12,5 tokens. Tem prioridade sobre `speech_rate` |
 | `speech_rate` | float | velocidade da fala: 1.0 normal, 1.3 ~30% mais rápido, 0.7 ~30% mais devagar. É o modelo falando diferente, não acelerar o áudio depois |
 | `seed` | int | torna a geração reproduzível |
+| `instruction` | string | instrução livre em texto, separada do `text` — sotaque, emoção, entonação. Ex.: `"fale com sotaque americano"`. Não é documentado oficialmente pelo MOSS, funciona por tentativa e erro |
 | `cache` | bool | `false` força regerar mesmo havendo cache |
 | `callback_url` | string | só em `/v1/tts/async` — ver seção abaixo |
 | `callback_token` | string | atalho: manda como `Authorization: Bearer <valor>` no callback |

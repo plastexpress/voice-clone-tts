@@ -38,6 +38,7 @@ export function Playground() {
     language: "",
     temperature: "",
     speechRate: "",
+    instruction: "",
   });
   const [useCache, setUseCache] = useState(true);
   const [result, setResult] = useState<GenerationResult | null>(null);
@@ -78,6 +79,7 @@ export function Playground() {
       if (overrides.language) payload.language = overrides.language;
       if (overrides.temperature) payload.temperature = Number(overrides.temperature);
       if (overrides.speechRate) payload.speech_rate = Number(overrides.speechRate);
+      if (overrides.instruction) payload.instruction = overrides.instruction;
     }
     if (!useCache) payload.cache = false;
     return payload;
@@ -406,6 +408,20 @@ audio.play();`}
                         setOverrides({ ...overrides, speechRate: event.target.value })
                       }
                       placeholder="1.0"
+                    />
+                  </Field>
+
+                  <Field
+                    label="Instrução (experimental)"
+                    hint="Separado do texto — sotaque, emoção, entonação. Ex.: 'fale com sotaque americano' ou 'fale animado, como se desse uma boa notícia'."
+                  >
+                    <Textarea
+                      rows={2}
+                      value={overrides.instruction}
+                      onChange={(event) =>
+                        setOverrides({ ...overrides, instruction: event.target.value })
+                      }
+                      placeholder="fale com sotaque americano"
                     />
                   </Field>
                 </div>

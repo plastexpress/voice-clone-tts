@@ -414,6 +414,8 @@ class MossTTSEngine(TTSEngine):
             message_kwargs["language"] = request.language
         if request.duration_tokens:
             message_kwargs["tokens"] = request.duration_tokens
+        if request.instruction:
+            message_kwargs["instruction"] = request.instruction
 
         build = self._processor.build_user_message
         message = build(**_filter_kwargs(build, message_kwargs))

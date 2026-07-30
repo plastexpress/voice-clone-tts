@@ -234,6 +234,7 @@ class InferenceQueue:
             max_new_tokens=params.max_new_tokens,
             duration_tokens=params.duration_tokens,
             seed=params.seed,
+            instruction=params.instruction,
         )
 
         started = time.monotonic()

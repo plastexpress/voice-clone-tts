@@ -37,6 +37,7 @@ export type TokenSettings = {
   duration_tokens?: number | null;
   speech_rate?: number;
   seed?: number | null;
+  instruction?: string;
   format?: "opus" | "wav";
   bitrate?: string;
   channels?: number;

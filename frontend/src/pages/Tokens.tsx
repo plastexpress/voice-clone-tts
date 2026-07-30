@@ -573,6 +573,16 @@ function TokenForm({
                 onChange={(event) => setSetting("speech_rate", Number(event.target.value))}
               />
             </Field>
+            <Field
+              label="Instrução (experimental)"
+              hint="Sotaque, emoção, entonação — separado do texto. Ex.: 'fale com sotaque americano'."
+            >
+              <Input
+                value={form.settings.instruction ?? ""}
+                onChange={(event) => setSetting("instruction", event.target.value)}
+                placeholder="fale com sotaque americano"
+              />
+            </Field>
             <Field label="Máximo de tokens de áudio" hint="1 s de fala ≈ 12,5 tokens">
               <Input
                 type="number"

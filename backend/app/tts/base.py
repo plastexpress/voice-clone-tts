@@ -30,6 +30,7 @@ class SynthesisRequest:
     max_new_tokens: int = 4096
     duration_tokens: int | None = None
     seed: int | None = None
+    instruction: str | None = None
 
 
 @dataclass(slots=True)

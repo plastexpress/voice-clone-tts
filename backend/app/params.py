@@ -34,6 +34,7 @@ class RenderParams:
     max_new_tokens: int
     duration_tokens: int | None
     seed: int | None
+    instruction: str | None
     format: str
     bitrate: str
     channels: int
@@ -54,6 +55,7 @@ class RenderParams:
             "max_new_tokens": self.max_new_tokens,
             "duration_tokens": self.duration_tokens,
             "seed": self.seed,
+            "instruction": self.instruction,
             "format": self.format,
             "bitrate": self.bitrate,
             "channels": self.channels,
@@ -145,6 +147,7 @@ def token_defaults(token: TokenContext) -> dict[str, Any]:
         ),
         "speech_rate": _as_float(cfg.get("speech_rate"), 1.0),
         "seed": _as_int(cfg.get("seed"), 0) if cfg.get("seed") not in (None, "") else None,
+        "instruction": cfg.get("instruction") or None,
         "format": (cfg.get("format") or "opus").lower(),
         "bitrate": str(cfg.get("bitrate") or settings.opus_bitrate),
         "channels": _as_int(cfg.get("channels"), settings.opus_channels),
@@ -206,6 +209,7 @@ def resolve(
         max_new_tokens=max_new_tokens,
         duration_tokens=duration_tokens,
         seed=pick("seed", request.seed),
+        instruction=pick("instruction", request.instruction) or None,
         format=fmt,
         bitrate=str(pick("bitrate", request.bitrate) or settings.opus_bitrate),
         channels=channels,
