@@ -1,6 +1,6 @@
 # --- Ambiente / segredos ---
-.env
-deploy/.env
+
+
 *.local
 
 # --- Dados persistentes (volumes locais) ---
