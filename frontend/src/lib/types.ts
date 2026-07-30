@@ -35,6 +35,7 @@ export type TokenSettings = {
   repetition_penalty?: number;
   max_new_tokens?: number;
   duration_tokens?: number | null;
+  speech_rate?: number;
   seed?: number | null;
   format?: "opus" | "wav";
   bitrate?: string;

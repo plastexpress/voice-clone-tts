@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS: TokenSettings = {
   top_k: 25,
   repetition_penalty: 1.0,
   max_new_tokens: 4096,
+  speech_rate: 1.0,
   format: "opus",
   bitrate: "64k",
   channels: 1,
@@ -557,6 +558,19 @@ function TokenForm({
                 max="3"
                 value={form.settings.repetition_penalty ?? 1.0}
                 onChange={(event) => setSetting("repetition_penalty", Number(event.target.value))}
+              />
+            </Field>
+            <Field
+              label="Velocidade da fala"
+              hint="1.0 = normal, 1.3 = ~30% mais rápido, 0.7 = ~30% mais devagar"
+            >
+              <Input
+                type="number"
+                step="0.05"
+                min="0.4"
+                max="2.5"
+                value={form.settings.speech_rate ?? 1.0}
+                onChange={(event) => setSetting("speech_rate", Number(event.target.value))}
               />
             </Field>
             <Field label="Máximo de tokens de áudio" hint="1 s de fala ≈ 12,5 tokens">

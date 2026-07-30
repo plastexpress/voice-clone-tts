@@ -41,7 +41,17 @@ class TTSRequest(BaseModel):
     duration_tokens: int | None = Field(
         default=None,
         ge=1,
-        description="Controle de duração: 1s de fala ≈ 12.5 tokens",
+        description="Controle de duração em tokens: 1s de fala ≈ 12.5 tokens. Se enviado, tem prioridade sobre speech_rate.",
+    )
+    speech_rate: float | None = Field(
+        default=None,
+        gt=0.4,
+        le=2.5,
+        description=(
+            "Velocidade da fala (não é acelerar o áudio depois — é o próprio modelo falando "
+            "mais rápido/devagar, via duration_tokens). 1.0 = normal, 1.3 = ~30% mais rápido, "
+            "0.7 = ~30% mais devagar."
+        ),
     )
     seed: int | None = Field(default=None, ge=0)
 

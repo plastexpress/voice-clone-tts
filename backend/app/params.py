@@ -87,28 +87,43 @@ def _as_int(value: Any, fallback: int) -> int:
         return fallback
 
 
-# ~12,5 tokens de áudio por segundo de fala (ver docs). O MOSS às vezes não
-# sorteia o token de fim de áudio (mais provável com temperature alta) e roda
-# até o teto de max_new_tokens — sem isso, uma frase de 10s pode virar 5+
-# minutos de geração (e estourar timeouts de proxy/túnel). O teto abaixo
-# escala com o texto, com folga generosa pra pausas/entonação.
+# ~12,5 tokens de áudio por segundo de fala (ver docs).
+#
+# O prompt do MOSS tem um campo explícito "Tokens: {n}" que diz ao modelo
+# quanto ele deve falar. Sem ele (duration_tokens=None, o padrão até aqui) o
+# modelo não tem nenhuma pista de duração e o mecanismo de parada (sortear o
+# token de fim de áudio) fica pouco confiável — sobretudo com temperature
+# alta: a frase real termina em poucos segundos e o resto vira silêncio,
+# ruído ou uma palavra solta até bater o teto de max_new_tokens.
+#
+# Testado empiricamente: texto de 49 caracteres, SEM hint -> 24,5s de áudio
+# (a frase real tinha uns 3s). Mesmo texto, COM duration_tokens=45 -> 3,6s,
+# batendo quase exato no alvo. Por isso agora sempre mandamos um hint —
+# estimado a partir do texto quando o cliente/token não pede uma duração
+# específica — e o teto de segurança vira só uma rede de proteção enxuta em
+# cima desse alvo, não mais o controle principal de duração.
 _TOKENS_PER_SECOND = 12.5
-_CHARS_PER_SECOND_SLOW = 6.0
-_SAFETY_MULTIPLIER = 3
-_MIN_SAFETY_TOKENS = 150  # ~12s de áudio
+_CHARS_PER_SECOND_NATURAL = 13.5  # calibrado no teste acima (49 chars / 3,6s)
+_MIN_DURATION_TOKENS = 25  # ~2s — piso pra textos bem curtos
+_SAFETY_MULTIPLIER = 1.6
+_SAFETY_BUFFER_TOKENS = 80  # ~6,4s de folga acima do alvo
 
 
-def _safety_max_new_tokens(text: str, duration_tokens: int | None, requested: int) -> int:
-    if duration_tokens:
-        # duration_tokens já é um pedido explícito de duração; só damos uma
-        # margem pra o modelo fechar a frase, não o texto inteiro de novo.
-        cap = int(duration_tokens * 1.5) + _MIN_SAFETY_TOKENS
-    else:
-        chars = len((text or "").strip()) or 1
-        estimated_seconds = chars / _CHARS_PER_SECOND_SLOW
-        cap = int(estimated_seconds * _TOKENS_PER_SECOND * _SAFETY_MULTIPLIER)
-    cap = max(cap, _MIN_SAFETY_TOKENS)
-    return min(requested, cap)
+def _estimate_duration_tokens(text: str, speech_rate: float = 1.0) -> int:
+    """Tokens de duração para o texto rodar no ritmo pedido.
+
+    speech_rate > 1 = fala mais rápida (menos tokens pro mesmo texto);
+    speech_rate < 1 = mais devagar (mais tokens). É controle de prosódia de
+    verdade (o modelo fala diferente), não acelerar o áudio depois.
+    """
+    chars = len((text or "").strip()) or 1
+    estimated_seconds = chars / _CHARS_PER_SECOND_NATURAL / max(speech_rate, 0.1)
+    return max(_MIN_DURATION_TOKENS, round(estimated_seconds * _TOKENS_PER_SECOND))
+
+
+def _safety_max_new_tokens(duration_tokens: int, requested: int) -> int:
+    cap = int(duration_tokens * _SAFETY_MULTIPLIER) + _SAFETY_BUFFER_TOKENS
+    return min(requested, cap) if requested else cap
 
 
 def token_defaults(token: TokenContext) -> dict[str, Any]:
@@ -128,6 +143,7 @@ def token_defaults(token: TokenContext) -> dict[str, Any]:
             if cfg.get("duration_tokens")
             else None
         ),
+        "speech_rate": _as_float(cfg.get("speech_rate"), 1.0),
         "seed": _as_int(cfg.get("seed"), 0) if cfg.get("seed") not in (None, "") else None,
         "format": (cfg.get("format") or "opus").lower(),
         "bitrate": str(cfg.get("bitrate") or settings.opus_bitrate),
@@ -160,11 +176,19 @@ def resolve(
 
     text = request.text.strip()[: settings.tts_max_text_length]
 
-    duration_tokens = pick("duration_tokens", request.duration_tokens)
+    # duration_tokens: se ninguém pediu um valor específico, estima a partir
+    # do texto (ajustado por speech_rate) e manda como hint pro modelo (ver
+    # comentário acima da função) — sem isso o modelo não sabe quanto falar
+    # e tende a "esticar" a geração. duration_tokens explícito tem prioridade
+    # sobre speech_rate (é um controle mais fino, em tokens).
+    speech_rate = _as_float(pick("speech_rate", request.speech_rate), 1.0)
+    duration_tokens = pick("duration_tokens", request.duration_tokens) or _estimate_duration_tokens(
+        text, speech_rate
+    )
     max_new_tokens = _as_int(
         pick("max_new_tokens", request.max_new_tokens), settings.moss_max_new_tokens
     )
-    max_new_tokens = _safety_max_new_tokens(text, duration_tokens, max_new_tokens)
+    max_new_tokens = _safety_max_new_tokens(duration_tokens, max_new_tokens)
 
     return RenderParams(
         text=text,

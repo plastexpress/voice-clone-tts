@@ -32,7 +32,13 @@ export function Playground() {
   const [selectedId, setSelectedId] = useState("");
   const [manualToken, setManualToken] = useState("");
   const [text, setText] = useState(SAMPLE);
-  const [overrides, setOverrides] = useState({ enabled: false, voice: "", language: "", temperature: "" });
+  const [overrides, setOverrides] = useState({
+    enabled: false,
+    voice: "",
+    language: "",
+    temperature: "",
+    speechRate: "",
+  });
   const [useCache, setUseCache] = useState(true);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -71,6 +77,7 @@ export function Playground() {
       if (overrides.voice) payload.voice = overrides.voice;
       if (overrides.language) payload.language = overrides.language;
       if (overrides.temperature) payload.temperature = Number(overrides.temperature);
+      if (overrides.speechRate) payload.speech_rate = Number(overrides.speechRate);
     }
     if (!useCache) payload.cache = false;
     return payload;
@@ -385,6 +392,20 @@ audio.play();`}
                         setOverrides({ ...overrides, temperature: event.target.value })
                       }
                       placeholder="1.7"
+                    />
+                  </Field>
+
+                  <Field label="Velocidade da fala" hint="1.0 = normal, 1.3 = mais rápido, 0.7 = mais devagar">
+                    <Input
+                      type="number"
+                      step="0.05"
+                      min="0.4"
+                      max="2.5"
+                      value={overrides.speechRate}
+                      onChange={(event) =>
+                        setOverrides({ ...overrides, speechRate: event.target.value })
+                      }
+                      placeholder="1.0"
                     />
                   </Field>
                 </div>
