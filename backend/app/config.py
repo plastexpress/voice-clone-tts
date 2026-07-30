@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     api_port: int = 8096
     api_title: str = "Voice Clone TTS API"
     cors_origins: str = "*"
+    # URL pública da API (sem barra no fim) — usada para montar o link de
+    # download do áudio nos callbacks de /v1/tts/async. Vazio = manda um
+    # caminho relativo (o cliente do callback precisa saber a base).
+    public_api_url: str = ""
 
     # ------------------------------------------------------------ PocketBase
     pb_url: str = "http://pocketbase:8090"

@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import cache
+from . import cache, webhooks
 from .audio import copy_as_wav, encode_opus
 from .config import settings
 from .logging_setup import get_logger
@@ -43,6 +43,8 @@ class GenerationJob:
     token_id: str | None = None
     token_name: str | None = None
     pb_job_id: str | None = None
+    callback_url: str | None = None
+    callback_headers: dict[str, str] = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     enqueued_at: float = field(default_factory=time.monotonic)
     started_at: float | None = None
@@ -59,6 +61,36 @@ class GenerationOutcome:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%fZ")
+
+
+def _audio_url(entry: cache.CacheEntry) -> str:
+    path = f"/v1/audio/{entry.id}"
+    base = settings.public_api_url.rstrip("/") if settings.public_api_url else ""
+    return f"{base}{path}" if base else path
+
+
+def _callback_payload(
+    job: GenerationJob,
+    *,
+    status: str,
+    entry: cache.CacheEntry | None = None,
+    cached: bool = False,
+    queue_ms: int = 0,
+    generation_ms: int = 0,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "job_id": job.pb_job_id or job.id,
+        "status": status,
+        "cached": cached,
+        "audio_url": _audio_url(entry) if entry else None,
+        "audio_id": entry.id if entry else None,
+        "duration_ms": entry.duration_ms if entry else None,
+        "queue_ms": queue_ms,
+        "generation_ms": generation_ms,
+        "error": error,
+        "finished_at": _now_iso(),
+    }
 
 
 class InferenceQueue:
@@ -155,6 +187,11 @@ class InferenceQueue:
                 self._failed += 1
                 log.exception("job %s falhou", job.id[:8])
                 await self._mark_job_failed(job, exc)
+                webhooks.fire(
+                    job.callback_url,
+                    job.callback_headers,
+                    _callback_payload(job, status="failed", error=str(exc)),
+                )
                 if not job.future.done():
                     job.future.set_exception(exc)
             finally:
@@ -171,6 +208,11 @@ class InferenceQueue:
         if entry is not None:
             await cache.register_hit(entry)
             await self._mark_job_done(job, entry, queue_ms, 0)
+            webhooks.fire(
+                job.callback_url,
+                job.callback_headers,
+                _callback_payload(job, status="completed", entry=entry, cached=True, queue_ms=queue_ms),
+            )
             return GenerationOutcome(entry=entry, cached=True, queue_ms=queue_ms, generation_ms=0)
 
         await self._mark_job_processing(job)
@@ -229,6 +271,13 @@ class InferenceQueue:
         )
 
         await self._mark_job_done(job, entry, queue_ms, generation_ms)
+        webhooks.fire(
+            job.callback_url,
+            job.callback_headers,
+            _callback_payload(
+                job, status="completed", entry=entry, queue_ms=queue_ms, generation_ms=generation_ms
+            ),
+        )
 
         if settings.cache_enabled:
             asyncio.create_task(_safe_enforce_limit())

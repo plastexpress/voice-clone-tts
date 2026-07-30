@@ -54,6 +54,9 @@ services:
 
       # CORS: domínios permitidos a acessar a API (padrão inclui os domínios plastexpress)
       CORS_ORIGINS: ${CORS_ORIGINS:-https://voice.plastexpress.com.br,https://voice-server.plastexpress.com.br,https://voice-api.plastexpress.com.br}
+      # URL pública da própria API — usada para montar o link de download do
+      # áudio nos callbacks de /v1/tts/async (ver PUBLIC_API_URL do frontend)
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-https://voice-api.plastexpress.com.br}
 
       TTS_ENGINE: ${TTS_ENGINE:-moss}
       MOSS_MODEL_ID: ${MOSS_MODEL_ID:-OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5}

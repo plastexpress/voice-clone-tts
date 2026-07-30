@@ -44,9 +44,13 @@ Só `text` é obrigatório. Os demais campos **só são aceitos se o token tiver
 | `top_k` | int | padrão 25 |
 | `repetition_penalty` | float | padrão 1.0 |
 | `max_new_tokens` | int | teto de tokens de áudio |
-| `duration_tokens` | int | controle de duração — 1 s ≈ 12,5 tokens |
+| `duration_tokens` | int | controle de duração em tokens — 1 s ≈ 12,5 tokens. Tem prioridade sobre `speech_rate` |
+| `speech_rate` | float | velocidade da fala: 1.0 normal, 1.3 ~30% mais rápido, 0.7 ~30% mais devagar. É o modelo falando diferente, não acelerar o áudio depois |
 | `seed` | int | torna a geração reproduzível |
 | `cache` | bool | `false` força regerar mesmo havendo cache |
+| `callback_url` | string | só em `/v1/tts/async` — ver seção abaixo |
+| `callback_token` | string | atalho: manda como `Authorization: Bearer <valor>` no callback |
+| `callback_headers` | objeto | headers extras no callback, ex.: `{"X-Api-Key": "..."}` — vence `callback_token` se colidir |
 
 ### Resposta
 
@@ -139,6 +143,51 @@ Mesmo corpo do `/v1/tts`, mas responde na hora com um job. Use para textos longo
 ```
 
 Se o texto já estiver em cache, o job já nasce `completed`.
+
+### Callback (webhook)
+
+Em vez de ficar consultando `GET /v1/jobs/{id}`, mande `callback_url` no corpo
+do `POST /v1/tts/async` — o backend chama essa URL sozinho quando o job
+terminar (sucesso ou falha), com até 3 tentativas se o seu endpoint estiver
+fora do ar.
+
+Duas formas de autenticar a chamada de callback no seu servidor:
+
+- `callback_token` — atalho, vai como `Authorization: Bearer <callback_token>`.
+- `callback_headers` — objeto livre de headers (até 20), pra quando seu
+  endpoint espera outra coisa (`X-Api-Key`, um esquema de auth diferente,
+  etc.). Se as duas colidirem no mesmo header, `callback_headers` vence.
+
+```json
+{
+  "text": "Bom dia! Seu pedido saiu para entrega.",
+  "callback_url": "https://seusite.com/webhooks/tts-pronto",
+  "callback_headers": {"X-Api-Key": "um-token-seu-para-validar-a-chamada"}
+}
+```
+
+O corpo que chega no seu `callback_url`:
+
+```json
+{
+  "job_id": "icxbiest4v49hne",
+  "status": "completed",
+  "cached": false,
+  "audio_url": "https://voice-api.plastexpress.com.br/v1/audio/4k4rfjb7jzf9dxe",
+  "audio_id": "4k4rfjb7jzf9dxe",
+  "duration_ms": 2578,
+  "queue_ms": 0,
+  "generation_ms": 292,
+  "error": null,
+  "finished_at": "2026-07-30 03:23:01.468310Z"
+}
+```
+
+`callback_url` só aceita `http://`/`https://` e não pode apontar para hosts
+internos (localhost, IPs privados, os serviços do próprio docker-compose) —
+protege contra usar o token da API para fazer o backend chamar sua própria
+rede interna. O resultado sempre continua disponível em
+`GET /v1/jobs/{id}` mesmo se o callback falhar.
 
 ## GET /v1/jobs/{job_id}
 

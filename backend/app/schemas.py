@@ -2,11 +2,45 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .config import settings
+
+# hosts que um callback_url não pode apontar — evita que um token da API vire
+# um jeito de fazer o backend chamar serviços internos da rede docker (SSRF).
+# Não resolve DNS (não protege contra DNS rebinding), só barra o caso óbvio
+# de alguém apontar direto pra um IP/hostname interno.
+_BLOCKED_CALLBACK_HOSTS = {"localhost", "0.0.0.0", "pocketbase", "backend", "frontend"}
+
+# headers que o cliente não pode sobrescrever na chamada de callback — mexem
+# no transporte HTTP em si, não são "dados" que façam sentido customizar.
+_BLOCKED_CALLBACK_HEADER_NAMES = {"host", "content-length", "transfer-encoding", "connection"}
+_MAX_CALLBACK_HEADERS = 20
+
+
+def _validate_callback_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("callback_url precisa começar com http:// ou https://")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("callback_url sem host válido")
+    if host in _BLOCKED_CALLBACK_HOSTS:
+        raise ValueError(f"callback_url não pode apontar para '{host}'")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        pass  # é um hostname, não um IP literal — segue
+    else:
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise ValueError("callback_url não pode apontar para um IP privado/interno")
+    return value
 
 
 class TTSRequest(BaseModel):
@@ -58,6 +92,54 @@ class TTSRequest(BaseModel):
     cache: bool | None = Field(
         default=None, description="false força regeneração mesmo com cache disponível"
     )
+
+    # --- callback (só usado por /v1/tts/async) --------------------------------
+    callback_url: str | None = Field(
+        default=None,
+        description="POST /v1/tts/async: URL chamada quando o job terminar (sucesso ou falha).",
+    )
+    callback_token: str | None = Field(
+        default=None,
+        max_length=2000,
+        description='Atalho: enviado como "Authorization: Bearer <valor>" na chamada de callback.',
+    )
+    callback_headers: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Headers extras na chamada de callback, ex.: {\"X-Api-Key\": \"...\"}. "
+            "Se colidir com callback_token (ex.: Authorization), callback_headers vence."
+        ),
+    )
+
+    @field_validator("callback_url")
+    @classmethod
+    def _check_callback_url(cls, value: str | None) -> str | None:
+        return _validate_callback_url(value)
+
+    @field_validator("callback_headers")
+    @classmethod
+    def _check_callback_headers(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if not value:
+            return value
+        if len(value) > _MAX_CALLBACK_HEADERS:
+            raise ValueError(f"callback_headers aceita no máximo {_MAX_CALLBACK_HEADERS} headers")
+        for key, val in value.items():
+            if not isinstance(key, str) or not isinstance(val, str):
+                raise ValueError("callback_headers precisa mapear string para string")
+            if key.lower() in _BLOCKED_CALLBACK_HEADER_NAMES:
+                raise ValueError(f"callback_headers não pode definir '{key}'")
+            if len(key) > 200 or len(val) > 4000:
+                raise ValueError("chave/valor de callback_headers muito grande")
+        return value
+
+    def merged_callback_headers(self) -> dict[str, str]:
+        """Combina callback_token (atalho) com callback_headers (headers explícitos)."""
+        headers: dict[str, str] = {}
+        if self.callback_token:
+            headers["Authorization"] = f"Bearer {self.callback_token}"
+        if self.callback_headers:
+            headers.update(self.callback_headers)
+        return headers
 
     def truncated_text(self) -> str:
         return self.text[: settings.tts_max_text_length]

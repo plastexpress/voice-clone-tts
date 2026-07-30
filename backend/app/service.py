@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from . import cache, params as params_module
+from . import cache, params as params_module, webhooks
 from .auth import TokenContext
 from .config import settings
 from .logging_setup import get_logger
@@ -168,6 +168,24 @@ async def submit_async(token: TokenContext, request: TTSRequest) -> dict[str, An
                     "finished_at": _now_iso(),
                 },
             )
+            if request.callback_url:
+                base = settings.public_api_url.rstrip("/") if settings.public_api_url else ""
+                webhooks.fire(
+                    request.callback_url,
+                    request.merged_callback_headers(),
+                    {
+                        "job_id": str(record["id"]),
+                        "status": "completed",
+                        "cached": True,
+                        "audio_url": f"{base}/v1/audio/{entry.id}" if base else f"/v1/audio/{entry.id}",
+                        "audio_id": entry.id,
+                        "duration_ms": entry.duration_ms,
+                        "queue_ms": 0,
+                        "generation_ms": 0,
+                        "error": None,
+                        "finished_at": _now_iso(),
+                    },
+                )
             return {
                 "job_id": str(record["id"]),
                 "status": "completed",
@@ -192,6 +210,8 @@ async def submit_async(token: TokenContext, request: TTSRequest) -> dict[str, An
         token_id=token.id,
         token_name=token.name,
         pb_job_id=str(record["id"]),
+        callback_url=request.callback_url,
+        callback_headers=request.merged_callback_headers(),
     )
 
     try:
