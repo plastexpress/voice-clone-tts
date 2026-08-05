@@ -7,6 +7,7 @@ O PocketBase é a única fonte de verdade para usuários, tokens, clones de voz,
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,15 @@ from .config import settings
 from .logging_setup import get_logger
 
 log = get_logger("vct.pocketbase")
+
+# o token de superusuário do PocketBase dura 24h. Em endpoints com API rules
+# (ex.: api_tokens tem `owner = @request.auth.id`), um token expirado NÃO
+# devolve 401/403 — a PocketBase trata como anônimo e devolve 200 com uma
+# lista vazia (confirmado testando na mão). Nosso retry só reage a 401/403,
+# então sem isso um admin token vencido faria toda autenticação de token da
+# API falhar silenciosamente ("token inválido" pra tokens válidos) até o
+# backend reiniciar. Por isso renovamos de forma proativa, bem antes do TTL.
+_TOKEN_REFRESH_MARGIN_SECONDS = 6 * 60 * 60  # 6h — bem abaixo do TTL de 24h
 
 
 class PocketBaseError(RuntimeError):
@@ -45,6 +55,7 @@ class PocketBaseClient:
         self.password = password or settings.pb_admin_password
         self._client: httpx.AsyncClient | None = None
         self._token: str | None = None
+        self._token_issued_at: float | None = None
         self._auth_lock = asyncio.Lock()
 
     # ------------------------------------------------------------- ciclo de vida
@@ -96,8 +107,14 @@ class PocketBaseClient:
             if response.status_code >= 400:
                 raise PocketBaseError(response.status_code, _safe_json(response))
             self._token = response.json()["token"]
+            self._token_issued_at = time.monotonic()
             log.info("autenticado no PocketBase como %s", self.email)
             return self._token
+
+    def _token_is_stale(self) -> bool:
+        if self._token is None or self._token_issued_at is None:
+            return True
+        return (time.monotonic() - self._token_issued_at) > _TOKEN_REFRESH_MARGIN_SECONDS
 
     async def _request(
         self,
@@ -107,6 +124,8 @@ class PocketBaseClient:
         retry_auth: bool = True,
         **kwargs: Any,
     ) -> httpx.Response:
+        if self._token_is_stale():
+            await self.authenticate(force=True)
         token = self._token or await self.authenticate()
         headers = dict(kwargs.pop("headers", {}) or {})
         headers["Authorization"] = token
