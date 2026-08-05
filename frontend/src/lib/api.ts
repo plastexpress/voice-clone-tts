@@ -193,6 +193,69 @@ export const api = {
     };
   },
 
+  /**
+   * Playground: enfileira usando a sessão logada (não um token de API), então
+   * sempre pode trocar voz e ajustar parâmetros — sem depender de nenhum
+   * token ter `allow_overrides` ligado.
+   */
+  async playgroundSubmitAsync(body: Record<string, unknown>): Promise<string> {
+    const data = await internal<{ job_id: string }>("/playground/tts/async", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return data.job_id;
+  },
+
+  async playgroundGetJob(jobId: string): Promise<JobStatus> {
+    const data = await internal<Record<string, unknown>>(`/playground/jobs/${jobId}`);
+    return {
+      jobId: String(data.job_id),
+      status: data.status as JobStatus["status"],
+      cached: !!data.cached,
+      audioId: (data.audio_id as string) || null,
+      durationMs: Number(data.duration_ms || 0),
+      queueMs: Number(data.queue_ms || 0),
+      generationMs: Number(data.generation_ms || 0),
+      error: (data.error as string) || null,
+    };
+  },
+
+  /** Playground: submete via sessão e faz polling até terminar; baixa o áudio no final. */
+  async generatePlaygroundAsync(
+    body: Record<string, unknown>,
+    onTick?: (job: JobStatus) => void,
+  ): Promise<GenerationResult> {
+    const started = performance.now();
+    const jobId = await this.playgroundSubmitAsync(body);
+
+    let job: JobStatus;
+    while (true) {
+      job = await this.playgroundGetJob(jobId);
+      onTick?.(job);
+      if (job.status === "completed" || job.status === "failed" || job.status === "canceled") break;
+      await sleep(1500);
+    }
+
+    if (job.status !== "completed" || !job.audioId) {
+      throw new ApiError(job.error || `job terminou como "${job.status}"`, 500);
+    }
+
+    const { url, blob } = await this.audioObjectUrl(job.audioId);
+    return {
+      url,
+      blob,
+      cached: job.cached,
+      audioId: job.audioId,
+      durationMs: job.durationMs,
+      queueMs: job.queueMs,
+      generationMs: job.generationMs,
+      totalMs: Math.round(performance.now() - started),
+      sizeBytes: blob.size,
+      model: "",
+      voice: "",
+    };
+  },
+
   /** GET /v1/me com um token de API — mostra o que o token já traz configurado. */
   async tokenInfo(rawToken: string): Promise<Record<string, unknown>> {
     const response = await fetch(`${config.apiBase}/v1/me`, {

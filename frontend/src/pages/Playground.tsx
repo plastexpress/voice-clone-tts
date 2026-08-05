@@ -3,17 +3,7 @@ import { PageHeader } from "../components/Layout";
 import { AudioPlayer } from "../components/AudioPlayer";
 import { CodeBlock } from "../components/CodeBlock";
 import { useToast } from "../components/Toast";
-import {
-  Badge,
-  Button,
-  Card,
-  Field,
-  Input,
-  Select,
-  Textarea,
-  Toggle,
-  cx,
-} from "../components/ui";
+import { Badge, Button, Card, Field, Input, Select, Textarea } from "../components/ui";
 import { IconBolt, IconSparkles } from "../components/icons";
 import { api, ApiError, type JobStatus } from "../lib/api";
 import { config } from "../lib/config";
@@ -24,6 +14,36 @@ import type { ApiToken, GenerationResult, Voice } from "../lib/types";
 
 const SAMPLE = "Oi! Esse é um teste de geração de voz rodando localmente na minha GPU.";
 
+type PlaygroundParams = {
+  voice: string;
+  language: string;
+  format: "" | "opus" | "wav";
+  bitrate: string;
+  channels: "" | "1" | "2";
+  temperature: string;
+  topP: string;
+  topK: string;
+  repetitionPenalty: string;
+  speechRate: string;
+  seed: string;
+  instruction: string;
+};
+
+const EMPTY_PARAMS: PlaygroundParams = {
+  voice: "",
+  language: "",
+  format: "",
+  bitrate: "",
+  channels: "",
+  temperature: "",
+  topP: "",
+  topK: "",
+  repetitionPenalty: "",
+  speechRate: "",
+  seed: "",
+  instruction: "",
+};
+
 export function Playground() {
   const toast = useToast();
 
@@ -32,14 +52,7 @@ export function Playground() {
   const [selectedId, setSelectedId] = useState("");
   const [manualToken, setManualToken] = useState("");
   const [text, setText] = useState(SAMPLE);
-  const [overrides, setOverrides] = useState({
-    enabled: false,
-    voice: "",
-    language: "",
-    temperature: "",
-    speechRate: "",
-    instruction: "",
-  });
+  const [params, setParams] = useState<PlaygroundParams>(EMPTY_PARAMS);
   const [useCache, setUseCache] = useState(true);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -74,39 +87,36 @@ export function Playground() {
 
   const body = useMemo(() => {
     const payload: Record<string, unknown> = { text };
-    if (overrides.enabled && selected?.allow_overrides) {
-      if (overrides.voice) payload.voice = overrides.voice;
-      if (overrides.language) payload.language = overrides.language;
-      if (overrides.temperature) payload.temperature = Number(overrides.temperature);
-      if (overrides.speechRate) payload.speech_rate = Number(overrides.speechRate);
-      if (overrides.instruction) payload.instruction = overrides.instruction;
-    }
+    if (params.voice) payload.voice = params.voice;
+    if (params.language) payload.language = params.language;
+    if (params.format) payload.format = params.format;
+    if (params.bitrate) payload.bitrate = params.bitrate;
+    if (params.channels) payload.channels = Number(params.channels);
+    if (params.temperature) payload.temperature = Number(params.temperature);
+    if (params.topP) payload.top_p = Number(params.topP);
+    if (params.topK) payload.top_k = Number(params.topK);
+    if (params.repetitionPenalty) payload.repetition_penalty = Number(params.repetitionPenalty);
+    if (params.speechRate) payload.speech_rate = Number(params.speechRate);
+    if (params.seed) payload.seed = Number(params.seed);
+    if (params.instruction) payload.instruction = params.instruction;
     if (!useCache) payload.cache = false;
     return payload;
-  }, [text, overrides, selected, useCache]);
+  }, [text, params, useCache]);
 
   const generate = useCallback(async () => {
-    if (!rawToken) {
-      toast.error("Escolha um token ou cole um valor válido");
-      return;
-    }
     if (!text.trim()) {
       toast.error("Escreva o texto que deve ser falado");
       return;
     }
 
-    const voiceLabel =
-      (overrides.enabled && overrides.voice) || selected?.expand?.voice?.slug || "";
-
     setGenerating(true);
     setResult(null);
     setProgress(null);
     try {
-      // assíncrono (job + polling): evita o teto de ~100s que proxies/túneis
-      // costumam impor a uma resposta síncrona quando a geração demora
-      // (voz nova ainda sem cache de referência, texto longo, fila ocupada).
-      const generated = await api.generateAsync(rawToken, body, setProgress);
-      setResult({ ...generated, voice: voiceLabel });
+      // sempre via sessão logada: pode trocar voz/parâmetros livremente aqui,
+      // sem depender de allow_overrides em nenhum token de API.
+      const generated = await api.generatePlaygroundAsync(body, setProgress);
+      setResult({ ...generated, voice: params.voice });
       toast.success(
         generated.cached
           ? "Servido do cache local — sem passar pela GPU"
@@ -120,7 +130,7 @@ export function Playground() {
       setGenerating(false);
       setProgress(null);
     }
-  }, [rawToken, text, body, toast, overrides, selected]);
+  }, [text, body, toast, params]);
 
   const tokenForExample = rawToken || "SEU_TOKEN";
   const jsonBody = JSON.stringify(body);
@@ -130,7 +140,7 @@ export function Playground() {
       <PageHeader
         icon="✨"
         title="Playground"
-        description="Testa a API de verdade: mesma rota, mesmo token e mesmas regras de cache que seus clientes usam."
+        description="Escolha qualquer voz clonada e ajuste os parâmetros livremente com sua sessão — os exemplos abaixo mostram como reproduzir isso com um token real de API."
       />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -202,8 +212,7 @@ export function Playground() {
 
               {result.voice && (
                 <p className="text-[12px] text-faint">
-                  voz <span className="font-mono text-muted">{result.voice}</span> · modelo{" "}
-                  <span className="font-mono text-muted">{result.model}</span>
+                  voz <span className="font-mono text-muted">{result.voice}</span>
                 </p>
               )}
             </Card>
@@ -212,9 +221,11 @@ export function Playground() {
           <div className="space-y-3">
             <h2 className="text-[13px] font-semibold text-ink">Como chamar de fora</h2>
             <p className="text-[12px] text-faint">
-              Fluxo assíncrono (job + polling): a resposta síncrona pode passar de 100s numa
-              geração mais longa e proxies/túneis na frente da API costumam derrubar a conexão
-              antes disso — o job continua no cache, mas seu cliente nunca vê o resultado.
+              O corpo abaixo reflete a voz e os parâmetros escolhidos ao lado. Pra reproduzir com
+              um cliente real, use um token com <code className="font-mono">allow_overrides</code>{" "}
+              ligado (só assim a API aceita esses campos extras vindos de fora). Fluxo assíncrono
+              (job + polling): a resposta síncrona pode passar de 100s numa geração mais longa e
+              proxies/túneis na frente da API costumam derrubar a conexão antes disso.
             </p>
             <CodeBlock
               label="curl"
@@ -296,7 +307,163 @@ audio.play();`}
         {/* ------------------------------------------------------- coluna 2 */}
         <div className="min-w-0 space-y-4">
           <Card className="space-y-3.5">
-            <Field label="Token" hint="Só aparecem os tokens cujo valor está salvo neste navegador.">
+            <div>
+              <p className="text-[13px] font-semibold text-ink">Voz &amp; parâmetros</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-faint">
+                Testes aqui usam sua sessão logada, não um token — pode trocar de voz e ajustar
+                tudo livremente. Deixe em branco pra cair no padrão do serviço.
+              </p>
+            </div>
+
+            <Field label="Voz">
+              <Select
+                value={params.voice}
+                onChange={(event) => setParams({ ...params, voice: event.target.value })}
+              >
+                <option value="">padrão do motor (sem clone)</option>
+                {voices.map((voice) => (
+                  <option key={voice.id} value={voice.slug}>
+                    {voice.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Idioma">
+                <Input
+                  value={params.language}
+                  onChange={(event) => setParams({ ...params, language: event.target.value })}
+                  placeholder="Portuguese"
+                />
+              </Field>
+              <Field label="Velocidade da fala" hint="1.0 = normal">
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0.4"
+                  max="2.5"
+                  value={params.speechRate}
+                  onChange={(event) => setParams({ ...params, speechRate: event.target.value })}
+                  placeholder="1.0"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Temperature">
+                <Input
+                  type="number"
+                  step="0.05"
+                  value={params.temperature}
+                  onChange={(event) => setParams({ ...params, temperature: event.target.value })}
+                  placeholder="1.7"
+                />
+              </Field>
+              <Field label="Top P">
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="1"
+                  value={params.topP}
+                  onChange={(event) => setParams({ ...params, topP: event.target.value })}
+                  placeholder="0.8"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Top K">
+                <Input
+                  type="number"
+                  step="1"
+                  min="0"
+                  max="500"
+                  value={params.topK}
+                  onChange={(event) => setParams({ ...params, topK: event.target.value })}
+                  placeholder="25"
+                />
+              </Field>
+              <Field label="Repetition penalty">
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0.5"
+                  max="3"
+                  value={params.repetitionPenalty}
+                  onChange={(event) =>
+                    setParams({ ...params, repetitionPenalty: event.target.value })
+                  }
+                  placeholder="1.0"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Formato">
+                <Select
+                  value={params.format}
+                  onChange={(event) =>
+                    setParams({ ...params, format: event.target.value as PlaygroundParams["format"] })
+                  }
+                >
+                  <option value="">opus (padrão)</option>
+                  <option value="opus">opus</option>
+                  <option value="wav">wav</option>
+                </Select>
+              </Field>
+              <Field label="Canais">
+                <Select
+                  value={params.channels}
+                  onChange={(event) =>
+                    setParams({
+                      ...params,
+                      channels: event.target.value as PlaygroundParams["channels"],
+                    })
+                  }
+                >
+                  <option value="">mono (padrão)</option>
+                  <option value="1">1 (mono)</option>
+                  <option value="2">2 (estéreo)</option>
+                </Select>
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Bitrate" hint='ex.: "64k"'>
+                <Input
+                  value={params.bitrate}
+                  onChange={(event) => setParams({ ...params, bitrate: event.target.value })}
+                  placeholder="64k"
+                />
+              </Field>
+              <Field label="Seed" hint="reprodutibilidade">
+                <Input
+                  type="number"
+                  min="0"
+                  value={params.seed}
+                  onChange={(event) => setParams({ ...params, seed: event.target.value })}
+                  placeholder="aleatório"
+                />
+              </Field>
+            </div>
+
+            <Field
+              label="Instrução (experimental)"
+              hint="Separado do texto — sotaque, emoção, entonação. Ex.: 'fale com sotaque americano'."
+            >
+              <Textarea
+                rows={2}
+                value={params.instruction}
+                onChange={(event) => setParams({ ...params, instruction: event.target.value })}
+                placeholder="fale com sotaque americano"
+              />
+            </Field>
+          </Card>
+
+          <Card className="space-y-3">
+            <Field label="Token" hint="Usado só nos exemplos de código ao lado, não na geração acima.">
               <Select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
                 <option value="">— escolha um token —</option>
                 {tokens.map((token) => {
@@ -340,8 +507,8 @@ audio.play();`}
                     </span>
                   </li>
                   <li>
-                    overrides:{" "}
-                    <span className={cx(selected.allow_overrides ? "text-success" : "text-faint")}>
+                    overrides de clientes externos:{" "}
+                    <span className={selected.allow_overrides ? "text-success" : "text-faint"}>
                       {selected.allow_overrides ? "permitidos" : "bloqueados"}
                     </span>
                   </li>
@@ -349,85 +516,6 @@ audio.play();`}
               </div>
             )}
           </Card>
-
-          {selected?.allow_overrides && (
-            <Card className="space-y-3">
-              <Toggle
-                checked={overrides.enabled}
-                onChange={(value) => setOverrides({ ...overrides, enabled: value })}
-                label="Sobrescrever no request"
-                hint="Manda os campos junto do texto, como um cliente faria."
-              />
-
-              {overrides.enabled && (
-                <div className="space-y-3">
-                  <Field label="Voz">
-                    <Select
-                      value={overrides.voice}
-                      onChange={(event) => setOverrides({ ...overrides, voice: event.target.value })}
-                    >
-                      <option value="">usar a do token</option>
-                      {voices.map((voice) => (
-                        <option key={voice.id} value={voice.slug}>
-                          {voice.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-
-                  <Field label="Idioma">
-                    <Input
-                      value={overrides.language}
-                      onChange={(event) =>
-                        setOverrides({ ...overrides, language: event.target.value })
-                      }
-                      placeholder="Portuguese"
-                    />
-                  </Field>
-
-                  <Field label="Temperature">
-                    <Input
-                      type="number"
-                      step="0.05"
-                      value={overrides.temperature}
-                      onChange={(event) =>
-                        setOverrides({ ...overrides, temperature: event.target.value })
-                      }
-                      placeholder="1.7"
-                    />
-                  </Field>
-
-                  <Field label="Velocidade da fala" hint="1.0 = normal, 1.3 = mais rápido, 0.7 = mais devagar">
-                    <Input
-                      type="number"
-                      step="0.05"
-                      min="0.4"
-                      max="2.5"
-                      value={overrides.speechRate}
-                      onChange={(event) =>
-                        setOverrides({ ...overrides, speechRate: event.target.value })
-                      }
-                      placeholder="1.0"
-                    />
-                  </Field>
-
-                  <Field
-                    label="Instrução (experimental)"
-                    hint="Separado do texto — sotaque, emoção, entonação. Ex.: 'fale com sotaque americano' ou 'fale animado, como se desse uma boa notícia'."
-                  >
-                    <Textarea
-                      rows={2}
-                      value={overrides.instruction}
-                      onChange={(event) =>
-                        setOverrides({ ...overrides, instruction: event.target.value })
-                      }
-                      placeholder="fale com sotaque americano"
-                    />
-                  </Field>
-                </div>
-              )}
-            </Card>
-          )}
 
           <Card>
             <p className="mb-1.5 text-[13px] font-medium text-ink">Corpo enviado</p>

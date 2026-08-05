@@ -236,6 +236,10 @@ async def submit_async(token: TokenContext, request: TTSRequest) -> dict[str, An
 
 async def touch_token(token: TokenContext, *, cached: bool) -> None:
     """Atualiza contadores de uso do token (sem bloquear a resposta)."""
+    if not token.id:
+        # token "virtual" (ex.: geração via sessão no Playground) — não existe
+        # registro em api_tokens para atualizar.
+        return
 
     async def _update() -> None:
         try:

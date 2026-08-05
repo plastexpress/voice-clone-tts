@@ -17,7 +17,7 @@ from .config import settings
 from .logging_setup import get_logger, setup_logging
 from .pocketbase import pb
 from .queue import queue
-from .routers import jobs, meta, system, tts
+from .routers import jobs, meta, playground, system, tts
 from .tts import EngineError, get_engine
 
 setup_logging()
@@ -145,6 +145,7 @@ app.include_router(jobs.router)
 app.include_router(meta.router)
 app.include_router(system.router)
 app.include_router(system.internal)
+app.include_router(playground.router)
 
 
 @app.exception_handler(RequestValidationError)

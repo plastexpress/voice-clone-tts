@@ -21,7 +21,7 @@ router = APIRouter(prefix="/v1", tags=["jobs"])
 TERMINAL = {"completed", "failed", "canceled"}
 
 
-def _build(record: dict[str, Any], cache_record: dict[str, Any] | None) -> JobStatusResponse:
+def build_status(record: dict[str, Any], cache_record: dict[str, Any] | None) -> JobStatusResponse:
     status = str(record.get("status") or "queued")
     audio_id = None
     audio_url = None
@@ -121,7 +121,7 @@ async def get_job(
         interval = min(interval * 1.5, 3.0)  # backoff: alivia o PocketBase em espera longa
         record, cache_record = await _fetch(job_id, token)
 
-    body = _build(record, cache_record)
+    body = build_status(record, cache_record)
 
     if body.status not in TERMINAL and budget > 0:
         # 425 em vez de 200 para que o cliente (n8n, curl --retry, etc.) trate
