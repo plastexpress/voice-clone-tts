@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     queue_max_size: int = 64
     sync_timeout_seconds: float = 300.0
     job_retention_hours: int = 48
+    # teto do ?wait= em GET /v1/jobs/{id}. Fica abaixo dos 100s que o
+    # Cloudflare tolera na frente da API — passar disso vira 524 no cliente.
+    job_wait_max_seconds: float = 90.0
+    job_wait_poll_interval: float = 0.5
 
     # -------------------------------------------------------- Observabilidade
     request_log_enabled: bool = True

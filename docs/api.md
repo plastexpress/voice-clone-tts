@@ -208,6 +208,30 @@ rede interna. O resultado sempre continua disponível em
 `status`: `queued` · `processing` · `completed` · `failed` · `canceled`.
 Um job só pode ser consultado pelo token que o criou.
 
+### Parâmetros
+
+| Query | Efeito |
+|---|---|
+| `wait` | segundos que a API segura a resposta esperando o job terminar (long-poll). `0` (padrão) responde na hora. Teto: `JOB_WAIT_MAX_SECONDS` (padrão 90s). |
+| `format=json` | quando o job estiver `completed`, embute o áudio no próprio JSON em `audio_base64` (+ `mime_type`, `size_bytes`), dispensando o `GET /v1/audio/{id}`. |
+
+Com `wait`, se o tempo acabar e o job ainda estiver rodando a resposta é
+**`425 Too Early`** (com `Retry-After`), e não `200` — assim um cliente que
+já tem retry embutido (n8n, `curl --retry`, etc.) repete sozinho em vez de
+seguir adiante sem áudio. O job continua rodando normalmente.
+
+```bash
+# dispara e espera em no máximo 2 chamadas, já recebendo o base64
+JOB=$(curl -s -X POST "$BASE/v1/tts/async" -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" -d '{"text":"Bom dia!"}' | jq -r .job_id)
+
+curl -s "$BASE/v1/jobs/$JOB?wait=90&format=json" -H "Authorization: Bearer $TOKEN"
+```
+
+> **Por que 90s e não mais?** O teto existe para caber embaixo do limite de
+> 100s de resposta do Cloudflare que fica na frente da API publicada. Passar
+> disso o cliente recebe `524` do Cloudflare, não a resposta da API.
+
 ## GET /v1/audio/{audio_id}
 
 Baixa um áudio já gerado. Aceita token de API ou sessão da interface.
@@ -264,6 +288,11 @@ Consequências práticas:
 
 ## Recomendações de integração
 
+- **Atrás do Cloudflare, não use `POST /v1/tts` síncrono.** O limite de 100s do
+  proxy corta a resposta antes de uma geração fria terminar, e repetir a chamada
+  **enfileira uma segunda geração** (o caminho síncrono não deduplica job em
+  andamento — só consulta o cache, que ainda está vazio). Use
+  `POST /v1/tts/async` + `GET /v1/jobs/{id}?wait=90&format=json`.
 - Use timeout de cliente **maior** que `SYNC_TIMEOUT_SECONDS` (padrão 300 s) ou o caminho assíncrono.
 - Em `504`, repita a mesma requisição depois de alguns segundos: a geração terminou em segundo plano e a resposta virá do cache.
 - Divida textos muito longos em parágrafos: além de mais rápido, o cache é reaproveitado por trecho.

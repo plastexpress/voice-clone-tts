@@ -191,6 +191,10 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
     created: str | None = None
     finished_at: str | None = None
+    # preenchidos só quando o job terminou e o cliente pediu ?format=json
+    audio_base64: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
 
 
 class VoiceOut(BaseModel):
