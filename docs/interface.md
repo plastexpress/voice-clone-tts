@@ -80,6 +80,19 @@ Testa a API de verdade — mesma rota, mesmo token, mesmas regras de cache.
 Se o token permitir overrides, aparece um painel para mandar voz, idioma e
 temperatura junto do texto, como um cliente faria.
 
+## Pronúncias
+
+Dicionário de find/replace aplicado ao texto **antes** de ele ir para o motor
+de TTS — útil para corrigir siglas, nomes próprios ou termos que o modelo lê
+errado (ex.: trocar "GPT" por "Ji Pi Ti").
+
+- padrão pode ser texto simples ou regex (sintaxe do Python `re`);
+- por padrão a busca ignora maiúsculas/minúsculas; dá para exigir exata;
+- com várias regras, a **ordem** define quem aplica primeiro;
+- regras desativadas ficam salvas mas não entram na geração;
+- valem para toda geração (API pública e Playground) — não são por usuário;
+- mudanças levam até 20 segundos para valer, por causa do cache do backend.
+
 ## Cache de áudio
 
 Todo áudio gerado fica salvo em disco. Aqui você ouve, busca por texto, remove um

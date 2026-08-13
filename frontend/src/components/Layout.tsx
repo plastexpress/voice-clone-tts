@@ -19,6 +19,7 @@ import {
   IconMoon,
   IconSettings,
   IconSparkles,
+  IconSpellcheck,
   IconSun,
   IconX,
 } from "./icons";
@@ -29,6 +30,7 @@ const NAV = [
   { to: "/playground", label: "Playground", icon: IconSparkles, end: false },
   { to: "/tokens", label: "Tokens", icon: IconKey, end: false },
   { to: "/voices", label: "Clones de voz", icon: IconMic, end: false },
+  { to: "/pronunciations", label: "Pronúncias", icon: IconSpellcheck, end: false },
   { to: "/cache", label: "Cache de áudio", icon: IconDatabase, end: false },
   { to: "/logs", label: "Requisições", icon: IconList, end: false },
   { to: "/settings", label: "Sistema", icon: IconSettings, end: false },

@@ -7,6 +7,7 @@ import { Login } from "./pages/Login";
 import { Playground } from "./pages/Playground";
 import { Tokens } from "./pages/Tokens";
 import { Voices } from "./pages/Voices";
+import { Pronunciations } from "./pages/Pronunciations";
 import { CachePage } from "./pages/Cache";
 import { Logs } from "./pages/Logs";
 import { SystemPage } from "./pages/System";
@@ -38,6 +39,7 @@ export default function App() {
         <Route path="/playground" element={<Playground />} />
         <Route path="/tokens" element={<Tokens />} />
         <Route path="/voices" element={<Voices />} />
+        <Route path="/pronunciations" element={<Pronunciations />} />
         <Route path="/cache" element={<CachePage />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/settings" element={<SystemPage />} />

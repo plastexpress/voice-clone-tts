@@ -214,3 +214,10 @@ export const IconWave = (p: IconProps) => (
     <path d="M3 12h2M7 8v8M11 4v16M15 7v10M19 10v4" />
   </Svg>
 );
+
+export const IconSpellcheck = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 14 7 4l4 10M4.2 11h5.6" />
+    <path d="m14 15 3 3 5-6" />
+  </Svg>
+);

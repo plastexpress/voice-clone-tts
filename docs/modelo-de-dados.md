@@ -28,6 +28,27 @@ Regras: as padrão do PocketBase (cada um vê e edita o próprio registro).
 
 Regras: leitura para qualquer usuário logado; alterar e apagar só o dono.
 
+## pronunciation_rules — dicionário de pronúncia
+
+| Campo | Tipo | Observação |
+| --- | --- | --- |
+| `pattern` | text | texto (ou regex, se `is_regex`) a ser encontrado |
+| `replacement` | text | texto que entra no lugar; pode ficar vazio |
+| `is_regex` | bool | trata `pattern` como regex (sintaxe do Python `re`) |
+| `case_sensitive` | bool | por padrão a busca ignora maiúsculas/minúsculas |
+| `enabled` | bool | regras desativadas ficam salvas mas não são aplicadas |
+| `order` | number | ordem de aplicação quando há várias regras (menor primeiro) |
+| `owner` | relation → users | quem criou a regra |
+
+Regras aplicadas em toda geração (API pública e Playground), não só para o
+dono — é um dicionário compartilhado, não uma preferência pessoal. O backend
+carrega as regras habilitadas com um cache curto (~20s, mesma ordem do cache
+de tokens) e as aplica ao texto, em ordem, antes de calcular a chave de cache.
+
+Regras de acesso: leitura para qualquer usuário logado; qualquer usuário
+logado também pode editar e apagar (é configuração compartilhada); só o
+próprio usuário pode criar (define `owner` para auditoria).
+
 ## api_tokens
 
 | Campo | Tipo | Observação |

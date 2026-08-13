@@ -26,6 +26,17 @@ export type Voice = BaseRecord & {
   active: boolean;
 };
 
+/** Regra de find/replace aplicada ao texto antes de mandar para o TTS. */
+export type PronunciationRule = BaseRecord & {
+  pattern: string;
+  replacement: string;
+  is_regex: boolean;
+  case_sensitive: boolean;
+  enabled: boolean;
+  order: number;
+  owner: string;
+};
+
 /** Parâmetros que o token aplica automaticamente em cada request. */
 export type TokenSettings = {
   language?: string;

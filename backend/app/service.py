@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from . import cache, params as params_module, webhooks
+from . import cache, params as params_module, pronunciation, webhooks
 from .auth import TokenContext
 from .config import settings
 from .logging_setup import get_logger
@@ -42,7 +42,8 @@ def _now_iso() -> str:
 async def resolve_request(
     token: TokenContext, request: TTSRequest
 ) -> tuple[RenderParams, dict[str, Any] | None, str]:
-    """Valida o texto, resolve o clone de voz e calcula a chave de cache."""
+    """Valida o texto, aplica o dicionário de pronúncia, resolve o clone de voz
+    e calcula a chave de cache."""
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="o campo 'text' está vazio")
@@ -54,6 +55,10 @@ async def resolve_request(
                 f"{settings.tts_max_text_length}. Divida em partes menores."
             ),
         )
+
+    # troca o texto pelo resultado das regras de pronúncia antes de seguir —
+    # é ele que vira a chave de cache e o que de fato chega no motor de TTS.
+    request.text = await pronunciation.apply_rules(text)
 
     voice = token.voice
     if request.voice:
